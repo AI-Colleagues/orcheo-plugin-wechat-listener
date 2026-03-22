@@ -1,0 +1,67 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=68", "wheel"]
+
+[project]
+authors = [{name = "Codex"}]
+dependencies = ["httpx>=0.27", "qrcode>=8.2"]
+description = "WeChat listener plugin for Orcheo"
+name = "orcheo-plugin-wechat-listener"
+requires-python = ">=3.12"
+version = "0.1.0"
+
+[project.scripts]
+orcheo-wechat-plugin-login = "orcheo_plugin_wechat_listener.login:main"
+
+[project.entry-points."orcheo.plugins"]
+wechat_listener = "orcheo_plugin_wechat_listener:plugin"
+
+[tool.setuptools.package-data]
+orcheo_plugin_wechat_listener = ["orcheo_plugin.toml"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[project.optional-dependencies]
+dev = [
+    "coverage[toml]>=7.6",
+    "diff-cover>=9.2.4",
+    "ruff>=0.11.3",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25",
+    "orcheo",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "pragma: no branch",
+    "@overload",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+]
+fail_under = 100
+
+[tool.coverage.run]
+branch = true
+command_line = "-m pytest"
+omit = ["*/site-packages/orcheo_plugin_wechat_listener/*"]
+source = ["src/orcheo_plugin_wechat_listener"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+exclude = ["build", "dist"]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "B",
+    "E",
+    "F",
+    "I",
+    "UP",
+]
