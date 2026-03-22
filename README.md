@@ -31,30 +31,12 @@ As of 2026-03-22, the npm `latest` version for both packages is `1.0.2`.
 If you are using the repository Docker stack and Canvas, the plugin, workflow,
 credentials, backend, and worker must all point at the same backend.
 
-1. Install the plugin into the stack runtime:
-
-   ```bash
-   orcheo plugin install \
-     'git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git' \
-     --runtime stack
-   docker compose restart backend worker
-   ```
-
+1. [Install the plugin](#installation) into the stack runtime (use `--runtime stack`).
 2. In Canvas, create a workflow from the `WeChat Private Listener` template.
-
-3. Connect the WeChat account and create the workflow-scoped credentials:
-
-   ```bash
-   uv run --project packages/plugins/wechat_listener \
-     orcheo-wechat-plugin-login \
-     --workflow-id <workflow-id> \
-     --access private \
-     --print-commands
-   ```
-
-   Scan the QR code in WeChat, then run the printed `orcheo credential create`
-   commands against the same `ORCHEO_API_URL`.
-
+3. [Connect the WeChat account](#connect-wechat-through-the-plugin-command) and
+   create the workflow-scoped credentials. Scan the QR code in WeChat, then run
+   the printed `orcheo credential create` commands against the same
+   `ORCHEO_API_URL`.
 4. Verify the workflow is ready, then send a real WeChat message:
 
    ```bash
@@ -74,35 +56,18 @@ orcheo plugin install \
   'git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git'
 ```
 
-For the repository Docker stack, include `--runtime stack`:
+For the repository Docker stack, include `--runtime stack` and restart:
 
 ```bash
 orcheo plugin install \
   'git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git' \
   --runtime stack
-```
-
-Then restart the backend and worker processes that should load the listener:
-
-```bash
 docker compose restart backend worker
 ```
 
 ## Connect WeChat Through The Plugin Command
 
-The plugin ships its own bootstrap command:
-
-```bash
-orcheo-wechat-plugin-login
-```
-
-When working from this repository, you can run it without a global install via:
-
-```bash
-uv run --project packages/plugins/wechat_listener orcheo-wechat-plugin-login
-```
-
-That command:
+The plugin ships a bootstrap command that:
 
 - fetches a Tencent WeChat QR code
 - waits for scan + confirmation
@@ -111,35 +76,28 @@ That command:
   `ORCHEO_SERVICE_TOKEN` are configured
 - otherwise prints the exact `orcheo credential create ...` commands to run
 
-Example:
+Run it directly from GitHub (no clone required):
 
 ```bash
-ORCHEO_API_URL=http://localhost:8000 \
-ORCHEO_SERVICE_TOKEN=your-token \
+uvx --from 'orcheo-plugin-wechat-listener @ git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git' \
+  orcheo-wechat-plugin-login \
+  --workflow-id <workflow-id> \
+  --access private \
+  --print-commands
+```
+
+Or from a local checkout of this repository:
+
+```bash
 uv run --project packages/plugins/wechat_listener \
   orcheo-wechat-plugin-login \
   --workflow-id <workflow-id> \
-  --access private
+  --access private \
+  --print-commands
 ```
 
-If you do not have a service token handy, add `--print-commands`. The command
-will still perform the QR login and then print the exact
-`orcheo credential create ...` commands to run manually.
-
-## Connect WeChat Through OpenClaw
-
-Tencent's official quick installer is:
-
-```bash
-npx -y @tencent-weixin/openclaw-weixin-cli@latest install
-```
-
-That flow installs `@tencent-weixin/openclaw-weixin`, opens the QR-code login,
-and stores the resulting token and account files under the OpenClaw state
-directory (normally `~/.openclaw/openclaw-weixin/accounts/`).
-
-This Orcheo plugin can also reuse those saved credentials directly. In the
-common case, you only need to configure the `account_id` that OpenClaw created.
+To write credentials directly to the vault instead of printing commands, set
+`ORCHEO_API_URL` and `ORCHEO_SERVICE_TOKEN` and omit `--print-commands`.
 
 ## Configuration
 
@@ -182,4 +140,3 @@ uv run pytest
 
 - [Plugin Reference](https://orcheo.readthedocs.io/custom_nodes_and_tools/)
 - [CLI Reference](https://orcheo.readthedocs.io/cli_reference/)
-- [OpenClaw WeChat plugin on npm](https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin)

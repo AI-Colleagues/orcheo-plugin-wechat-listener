@@ -16,20 +16,26 @@ from typing import Any
 from uuid import UUID, uuid5
 
 import httpx
-from orcheo.listeners.models import (
-    ListenerCursor,
-    ListenerDispatchMessage,
-    ListenerDispatchPayload,
-    ListenerHealthSnapshot,
-    ListenerSubscription,
-)
-from orcheo.listeners.registry import ListenerMetadata
-from orcheo.models.base import _utcnow
-from orcheo.nodes.base import TaskNode
-from orcheo.nodes.listeners import ListenerNode
-from orcheo.nodes.registry import NodeMetadata
-from orcheo.plugins import PluginAPI
-from pydantic import Field
+
+try:
+    from orcheo.listeners.models import (
+        ListenerCursor,
+        ListenerDispatchMessage,
+        ListenerDispatchPayload,
+        ListenerHealthSnapshot,
+        ListenerSubscription,
+    )
+    from orcheo.listeners.registry import ListenerMetadata
+    from orcheo.models.base import _utcnow
+    from orcheo.nodes.base import TaskNode
+    from orcheo.nodes.listeners import ListenerNode
+    from orcheo.nodes.registry import NodeMetadata
+    from orcheo.plugins import PluginAPI
+    from pydantic import Field
+
+    _HAS_ORCHEO = True
+except ModuleNotFoundError:  # pragma: no cover - standalone CLI usage
+    _HAS_ORCHEO = False
 
 logger = logging.getLogger(__name__)
 
@@ -542,396 +548,393 @@ async def _wait_or_stop(stop_event: asyncio.Event, *, timeout_seconds: float) ->
     return True
 
 
-class WechatListenerPluginNode(ListenerNode):
-    """Declare a WeChat listener subscription from an external plugin package."""
+if _HAS_ORCHEO:
 
-    platform: str = "wechat"
-    account_id: str = "[[wechat_account_id]]"
-    bot_token: str = "[[wechat_bot_token]]"
-    base_url: str = DEFAULT_WEIXIN_BASE_URL
-    openclaw_state_dir: str = ""
-    bootstrap_openclaw_cursor: bool = True
-    long_poll_timeout_ms: int = DEFAULT_LONG_POLL_TIMEOUT_MS
-    test_events: list[dict[str, Any]] = Field(default_factory=list)
+    class WechatListenerPluginNode(ListenerNode):
+        """Declare a WeChat listener subscription from an external plugin package."""
 
+        platform: str = "wechat"
+        account_id: str = "[[wechat_account_id]]"
+        bot_token: str = "[[wechat_bot_token]]"
+        base_url: str = DEFAULT_WEIXIN_BASE_URL
+        openclaw_state_dir: str = ""
+        bootstrap_openclaw_cursor: bool = True
+        long_poll_timeout_ms: int = DEFAULT_LONG_POLL_TIMEOUT_MS
+        test_events: list[dict[str, Any]] = Field(default_factory=list)
 
-class WechatReplyNode(TaskNode):
-    """Reply to a WeChat user through the OpenClaw HTTP API."""
+    class WechatReplyNode(TaskNode):
+        """Reply to a WeChat user through the OpenClaw HTTP API."""
 
-    message: str = Field(description="Reply text content")
-    to_user_id: str = ""
-    context_token: str = ""
-    account_id: str = "[[wechat_account_id]]"
-    bot_token: str = "[[wechat_bot_token]]"
-    base_url: str = DEFAULT_WEIXIN_BASE_URL
-    openclaw_state_dir: str = ""
-    reply_target: dict[str, Any] | str = Field(default_factory=dict)
-    raw_event: dict[str, Any] | str = Field(default_factory=dict)
+        message: str = Field(description="Reply text content")
+        to_user_id: str = ""
+        context_token: str = ""
+        account_id: str = "[[wechat_account_id]]"
+        bot_token: str = "[[wechat_bot_token]]"
+        base_url: str = DEFAULT_WEIXIN_BASE_URL
+        openclaw_state_dir: str = ""
+        reply_target: dict[str, Any] | str = Field(default_factory=dict)
+        raw_event: dict[str, Any] | str = Field(default_factory=dict)
 
-    async def run(self, state: Any, config: Any) -> dict[str, Any]:
-        """Send one text reply."""
-        del state, config
-        if not self.message.strip():
-            raise ValueError("WechatReplyNode.message must not be empty.")
+        async def run(self, state: Any, config: Any) -> dict[str, Any]:
+            """Send one text reply."""
+            del state, config
+            if not self.message.strip():
+                raise ValueError("WechatReplyNode.message must not be empty.")
 
-        reply_target = _coerce_mapping(self.reply_target)
-        raw_event = _coerce_mapping(self.raw_event)
-        node_config = {
-            "account_id": self.account_id,
-            "bot_token": self.bot_token,
-            "base_url": self.base_url,
-            "openclaw_state_dir": self.openclaw_state_dir,
-        }
-        to_user_id = (
-            _optional_string(self.to_user_id)
-            or _optional_string(reply_target.get("to_user_id"))
-            or _optional_string(raw_event.get("from_user_id"))
-        )
-        if to_user_id is None:
-            raise ValueError(
-                "WechatReplyNode could not determine to_user_id from config, "
-                "reply_target, or raw_event."
+            reply_target = _coerce_mapping(self.reply_target)
+            raw_event = _coerce_mapping(self.raw_event)
+            node_config = {
+                "account_id": self.account_id,
+                "bot_token": self.bot_token,
+                "base_url": self.base_url,
+                "openclaw_state_dir": self.openclaw_state_dir,
+            }
+            to_user_id = (
+                _optional_string(self.to_user_id)
+                or _optional_string(reply_target.get("to_user_id"))
+                or _optional_string(raw_event.get("from_user_id"))
             )
-
-        context_token = (
-            _optional_string(self.context_token)
-            or _optional_string(reply_target.get("context_token"))
-            or _optional_string(raw_event.get("context_token"))
-        )
-        if context_token is None:
-            raise ValueError(
-                "WechatReplyNode requires a context_token from the listener event."
-            )
-
-        token = _resolve_bot_token(node_config)
-        if token is None:
-            raise ValueError(get_weixin_long_poll_block_reason(node_config))
-
-        await send_weixin_text_message(
-            base_url=_resolve_base_url(
-                {
-                    **node_config,
-                    "base_url": (
-                        _optional_string(reply_target.get("base_url")) or self.base_url
-                    ),
-                }
-            ),
-            token=token,
-            to_user_id=to_user_id,
-            context_token=context_token,
-            message=self.message,
-        )
-        return {"sent": True, "to_user_id": to_user_id}
-
-
-class WechatListenerAdapter:
-    """Receive WeChat messages through the OpenClaw long-poll API."""
-
-    def __init__(
-        self,
-        *,
-        repository: Any,
-        subscription: ListenerSubscription,
-        runtime_id: str,
-    ) -> None:
-        self._repository = repository
-        self.subscription = subscription
-        self._runtime_id = runtime_id
-        self._status = "starting"
-        self._detail: str | None = None
-        self._last_polled_at: datetime | None = None
-        self._last_event_at: datetime | None = None
-        self._consecutive_failures = 0
-
-    async def run(self, stop_event: asyncio.Event) -> None:
-        """Dispatch fixture events or start long polling until stopped."""
-        events = self.subscription.config.get("test_events", [])
-        if isinstance(events, list) and events:
-            await self._run_fixture_mode(events=events, stop_event=stop_event)
-            return
-        await self._run_long_poll(stop_event)
-
-    async def _run_fixture_mode(
-        self,
-        *,
-        events: list[Any],
-        stop_event: asyncio.Event,
-    ) -> None:
-        self._status = "healthy"
-        self._detail = "running in fixture mode"
-        for index, item in enumerate(events):
-            if stop_event.is_set():
-                break
-            event = item if isinstance(item, Mapping) else {"text": str(item)}
-            payload = normalize_weixin_test_event(
-                self.subscription,
-                event,
-                index=index,
-            )
-            await self._repository.dispatch_listener_event(
-                self.subscription.id,
-                payload,
-            )
-            self._last_event_at = _utcnow()
-        await stop_event.wait()
-        self._status = "stopped"
-
-    async def _run_long_poll(self, stop_event: asyncio.Event) -> None:
-        block_reason = get_weixin_long_poll_block_reason(self.subscription.config)
-        if block_reason is not None:
-            self._status = "error"
-            self._detail = f"blocked: {block_reason}"
-            logger.warning(
-                "Weixin listener subscription %s is blocked: %s",
-                self.subscription.id,
-                block_reason,
-            )
-            await stop_event.wait()
-            self._status = "stopped"
-            return
-
-        token = _resolve_bot_token(self.subscription.config)
-        if token is None:  # pragma: no cover - defensive
-            raise RuntimeError("Weixin token unexpectedly missing after validation.")
-
-        cursor = await self._repository.get_listener_cursor(self.subscription.id)
-        get_updates_buf = _cursor_get_updates_buf(cursor) or ""
-        if not get_updates_buf and bool(
-            self.subscription.config.get("bootstrap_openclaw_cursor", True)
-        ):
-            account_id = _resolved_config_string(
-                self.subscription.config.get("account_id")
-            )
-            if account_id is not None:
-                get_updates_buf = (
-                    _load_openclaw_sync_buf(
-                        account_id,
-                        state_dir=_resolve_openclaw_state_dir(self.subscription.config),
-                    )
-                    or ""
+            if to_user_id is None:
+                raise ValueError(
+                    "WechatReplyNode could not determine to_user_id from config, "
+                    "reply_target, or raw_event."
                 )
 
-        base_url = _resolve_base_url(self.subscription.config)
-        poll_timeout_ms = int(
-            self.subscription.config.get(
-                "long_poll_timeout_ms",
-                DEFAULT_LONG_POLL_TIMEOUT_MS,
+            context_token = (
+                _optional_string(self.context_token)
+                or _optional_string(reply_target.get("context_token"))
+                or _optional_string(raw_event.get("context_token"))
             )
-        )
+            if context_token is None:
+                raise ValueError(
+                    "WechatReplyNode requires a context_token from the listener event."
+                )
 
-        while not stop_event.is_set():
-            try:
-                response = await self._poll_once_or_stop(
-                    stop_event,
+            token = _resolve_bot_token(node_config)
+            if token is None:
+                raise ValueError(get_weixin_long_poll_block_reason(node_config))
+
+            await send_weixin_text_message(
+                base_url=_resolve_base_url(
+                    {
+                        **node_config,
+                        "base_url": (
+                            _optional_string(reply_target.get("base_url")) or self.base_url
+                        ),
+                    }
+                ),
+                token=token,
+                to_user_id=to_user_id,
+                context_token=context_token,
+                message=self.message,
+            )
+            return {"sent": True, "to_user_id": to_user_id}
+
+    class WechatListenerAdapter:
+        """Receive WeChat messages through the OpenClaw long-poll API."""
+
+        def __init__(
+            self,
+            *,
+            repository: Any,
+            subscription: ListenerSubscription,
+            runtime_id: str,
+        ) -> None:
+            self._repository = repository
+            self.subscription = subscription
+            self._runtime_id = runtime_id
+            self._status = "starting"
+            self._detail: str | None = None
+            self._last_polled_at: datetime | None = None
+            self._last_event_at: datetime | None = None
+            self._consecutive_failures = 0
+
+        async def run(self, stop_event: asyncio.Event) -> None:
+            """Dispatch fixture events or start long polling until stopped."""
+            events = self.subscription.config.get("test_events", [])
+            if isinstance(events, list) and events:
+                await self._run_fixture_mode(events=events, stop_event=stop_event)
+                return
+            await self._run_long_poll(stop_event)
+
+        async def _run_fixture_mode(
+            self,
+            *,
+            events: list[Any],
+            stop_event: asyncio.Event,
+        ) -> None:
+            self._status = "healthy"
+            self._detail = "running in fixture mode"
+            for index, item in enumerate(events):
+                if stop_event.is_set():
+                    break
+                event = item if isinstance(item, Mapping) else {"text": str(item)}
+                payload = normalize_weixin_test_event(
+                    self.subscription,
+                    event,
+                    index=index,
+                )
+                await self._repository.dispatch_listener_event(
+                    self.subscription.id,
+                    payload,
+                )
+                self._last_event_at = _utcnow()
+            await stop_event.wait()
+            self._status = "stopped"
+
+        async def _run_long_poll(self, stop_event: asyncio.Event) -> None:
+            block_reason = get_weixin_long_poll_block_reason(self.subscription.config)
+            if block_reason is not None:
+                self._status = "error"
+                self._detail = f"blocked: {block_reason}"
+                logger.warning(
+                    "Weixin listener subscription %s is blocked: %s",
+                    self.subscription.id,
+                    block_reason,
+                )
+                await stop_event.wait()
+                self._status = "stopped"
+                return
+
+            token = _resolve_bot_token(self.subscription.config)
+            if token is None:  # pragma: no cover - defensive
+                raise RuntimeError("Weixin token unexpectedly missing after validation.")
+
+            cursor = await self._repository.get_listener_cursor(self.subscription.id)
+            get_updates_buf = _cursor_get_updates_buf(cursor) or ""
+            if not get_updates_buf and bool(
+                self.subscription.config.get("bootstrap_openclaw_cursor", True)
+            ):
+                account_id = _resolved_config_string(
+                    self.subscription.config.get("account_id")
+                )
+                if account_id is not None:
+                    get_updates_buf = (
+                        _load_openclaw_sync_buf(
+                            account_id,
+                            state_dir=_resolve_openclaw_state_dir(self.subscription.config),
+                        )
+                        or ""
+                    )
+
+            base_url = _resolve_base_url(self.subscription.config)
+            poll_timeout_ms = int(
+                self.subscription.config.get(
+                    "long_poll_timeout_ms",
+                    DEFAULT_LONG_POLL_TIMEOUT_MS,
+                )
+            )
+
+            while not stop_event.is_set():
+                try:
+                    response = await self._poll_once_or_stop(
+                        stop_event,
+                        base_url=base_url,
+                        token=token,
+                        get_updates_buf=get_updates_buf,
+                        timeout_ms=poll_timeout_ms,
+                    )
+                    if response is None:
+                        break
+
+                    self._last_polled_at = _utcnow()
+                    next_timeout_ms = response.get("longpolling_timeout_ms")
+                    if isinstance(next_timeout_ms, int | float) and next_timeout_ms > 0:
+                        poll_timeout_ms = int(next_timeout_ms)
+
+                    ret = response.get("ret")
+                    errcode = response.get("errcode")
+                    if (ret not in (None, 0)) or (errcode not in (None, 0)):
+                        await self._handle_api_error(
+                            stop_event,
+                            response=response,
+                        )
+                        continue
+
+                    raw_cursor = response.get("get_updates_buf")
+                    new_get_updates_buf = (
+                        _optional_string(raw_cursor)
+                        if raw_cursor is not None
+                        else get_updates_buf
+                    )
+                    if new_get_updates_buf != get_updates_buf:
+                        cursor = await _save_cursor(
+                            self._repository,
+                            subscription_id=self.subscription.id,
+                            get_updates_buf=new_get_updates_buf,
+                            cursor=cursor,
+                        )
+                        get_updates_buf = new_get_updates_buf
+
+                    for message in response.get("msgs", []):
+                        if not isinstance(message, Mapping):
+                            continue
+                        payload = normalize_weixin_message(self.subscription, message)
+                        if payload is None:
+                            continue
+                        await self._repository.dispatch_listener_event(
+                            self.subscription.id,
+                            payload,
+                        )
+                        self._last_event_at = _utcnow()
+
+                    self._status = "healthy"
+                    self._detail = None
+                    self._consecutive_failures = 0
+                except asyncio.CancelledError:  # pragma: no cover - task cancellation
+                    raise
+                except Exception as exc:
+                    self._consecutive_failures += 1
+                    self._status = "backoff"
+                    self._detail = str(exc)
+                    backoff_seconds = min(
+                        30.0,
+                        max(1.0, float(self._consecutive_failures)),
+                    )
+                    if await _wait_or_stop(
+                        stop_event,
+                        timeout_seconds=backoff_seconds,
+                    ):
+                        break
+            self._status = "stopped"
+
+        async def _poll_once_or_stop(
+            self,
+            stop_event: asyncio.Event,
+            *,
+            base_url: str,
+            token: str,
+            get_updates_buf: str,
+            timeout_ms: int,
+        ) -> dict[str, Any] | None:
+            """Return one long-poll response or ``None`` when shutting down."""
+            poll_task = asyncio.create_task(
+                get_weixin_updates(
                     base_url=base_url,
                     token=token,
                     get_updates_buf=get_updates_buf,
-                    timeout_ms=poll_timeout_ms,
+                    timeout_ms=timeout_ms,
                 )
-                if response is None:
-                    break
-
-                self._last_polled_at = _utcnow()
-                next_timeout_ms = response.get("longpolling_timeout_ms")
-                if isinstance(next_timeout_ms, int | float) and next_timeout_ms > 0:
-                    poll_timeout_ms = int(next_timeout_ms)
-
-                ret = response.get("ret")
-                errcode = response.get("errcode")
-                if (ret not in (None, 0)) or (errcode not in (None, 0)):
-                    await self._handle_api_error(
-                        stop_event,
-                        response=response,
-                    )
-                    continue
-
-                raw_cursor = response.get("get_updates_buf")
-                new_get_updates_buf = (
-                    _optional_string(raw_cursor)
-                    if raw_cursor is not None
-                    else get_updates_buf
-                )
-                if new_get_updates_buf != get_updates_buf:
-                    cursor = await _save_cursor(
-                        self._repository,
-                        subscription_id=self.subscription.id,
-                        get_updates_buf=new_get_updates_buf,
-                        cursor=cursor,
-                    )
-                    get_updates_buf = new_get_updates_buf
-
-                for message in response.get("msgs", []):
-                    if not isinstance(message, Mapping):
-                        continue
-                    payload = normalize_weixin_message(self.subscription, message)
-                    if payload is None:
-                        continue
-                    await self._repository.dispatch_listener_event(
-                        self.subscription.id,
-                        payload,
-                    )
-                    self._last_event_at = _utcnow()
-
-                self._status = "healthy"
-                self._detail = None
-                self._consecutive_failures = 0
-            except asyncio.CancelledError:  # pragma: no cover - task cancellation
-                raise
-            except Exception as exc:
-                self._consecutive_failures += 1
-                self._status = "backoff"
-                self._detail = str(exc)
-                backoff_seconds = min(
-                    30.0,
-                    max(1.0, float(self._consecutive_failures)),
-                )
-                if await _wait_or_stop(
-                    stop_event,
-                    timeout_seconds=backoff_seconds,
-                ):
-                    break
-        self._status = "stopped"
-
-    async def _poll_once_or_stop(
-        self,
-        stop_event: asyncio.Event,
-        *,
-        base_url: str,
-        token: str,
-        get_updates_buf: str,
-        timeout_ms: int,
-    ) -> dict[str, Any] | None:
-        """Return one long-poll response or ``None`` when shutting down."""
-        poll_task = asyncio.create_task(
-            get_weixin_updates(
-                base_url=base_url,
-                token=token,
-                get_updates_buf=get_updates_buf,
-                timeout_ms=timeout_ms,
             )
-        )
-        stop_task = asyncio.create_task(stop_event.wait())
-        done, pending = await asyncio.wait(
-            {poll_task, stop_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        if stop_task in done:
+            stop_task = asyncio.create_task(stop_event.wait())
+            done, pending = await asyncio.wait(
+                {poll_task, stop_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if stop_task in done:
+                await asyncio.gather(*pending, return_exceptions=True)
+                return None
             await asyncio.gather(*pending, return_exceptions=True)
-            return None
-        await asyncio.gather(*pending, return_exceptions=True)
-        return await poll_task
+            return await poll_task
 
-    async def _handle_api_error(
-        self,
-        stop_event: asyncio.Event,
-        *,
-        response: Mapping[str, Any],
-    ) -> None:
-        """Handle a non-success OpenClaw API response."""
-        errcode = response.get("errcode")
-        ret = response.get("ret")
-        errmsg = _optional_string(response.get("errmsg")) or "unknown OpenClaw error"
-        if errcode == SESSION_EXPIRED_ERRCODE or ret == SESSION_EXPIRED_ERRCODE:
-            self._status = "backoff"
-            self._detail = (
-                "Weixin session expired in OpenClaw (errcode -14); "
-                "waiting before retry."
+        async def _handle_api_error(
+            self,
+            stop_event: asyncio.Event,
+            *,
+            response: Mapping[str, Any],
+        ) -> None:
+            """Handle a non-success OpenClaw API response."""
+            errcode = response.get("errcode")
+            ret = response.get("ret")
+            errmsg = _optional_string(response.get("errmsg")) or "unknown OpenClaw error"
+            if errcode == SESSION_EXPIRED_ERRCODE or ret == SESSION_EXPIRED_ERRCODE:
+                self._status = "backoff"
+                self._detail = (
+                    "Weixin session expired in OpenClaw (errcode -14); "
+                    "waiting before retry."
+                )
+                await _wait_or_stop(
+                    stop_event,
+                    timeout_seconds=float(
+                        self.subscription.config.get("session_pause_seconds", 3600)
+                    ),
+                )
+                return
+            raise RuntimeError(
+                f"Weixin getUpdates failed: ret={ret}, errcode={errcode}, errmsg={errmsg}"
             )
-            await _wait_or_stop(
-                stop_event,
-                timeout_seconds=float(
-                    self.subscription.config.get("session_pause_seconds", 3600)
+
+        def health(self) -> ListenerHealthSnapshot:
+            """Return the current adapter health snapshot."""
+            return ListenerHealthSnapshot(
+                subscription_id=self.subscription.id,
+                runtime_id=self._runtime_id,
+                status=self._status,
+                platform=self.subscription.platform,
+                last_polled_at=self._last_polled_at,
+                last_event_at=self._last_event_at,
+                consecutive_failures=self._consecutive_failures,
+                detail=self._detail,
+            )
+
+    WeixinListenerPluginNode = WechatListenerPluginNode
+    WeixinReplyNode = WechatReplyNode
+    WeixinListenerAdapter = WechatListenerAdapter
+
+    class WechatListenerPlugin:
+        """Plugin entry point for the WeChat listener package."""
+
+        def register(self, api: PluginAPI) -> None:
+            """Register the WeChat listener node, reply node, and adapter."""
+            api.register_node(
+                NodeMetadata(
+                    name="WechatListenerPluginNode",
+                    description="Receive WeChat events through the plugin contract.",
+                    category="trigger",
+                ),
+                WechatListenerPluginNode,
+            )
+            api.register_node(
+                NodeMetadata(
+                    name="WeixinListenerPluginNode",
+                    description="Backwards-compatible alias for WechatListenerPluginNode.",
+                    category="trigger",
+                ),
+                WechatListenerPluginNode,
+            )
+            api.register_node(
+                NodeMetadata(
+                    name="WechatReplyNode",
+                    description="Reply to WeChat messages through OpenClaw HTTP APIs.",
+                    category="messaging",
+                ),
+                WechatReplyNode,
+            )
+            api.register_node(
+                NodeMetadata(
+                    name="WeixinReplyNode",
+                    description="Backwards-compatible alias for WechatReplyNode.",
+                    category="messaging",
+                ),
+                WechatReplyNode,
+            )
+            api.register_listener(
+                ListenerMetadata(
+                    id="wechat",
+                    display_name="WeChat Listener",
+                    description="Receive WeChat messages through OpenClaw long polling.",
+                ),
+                compile_weixin_listener,
+                lambda *, repository, subscription, runtime_id: WechatListenerAdapter(
+                    repository=repository,
+                    subscription=subscription,
+                    runtime_id=runtime_id,
                 ),
             )
-            return
-        raise RuntimeError(
-            f"Weixin getUpdates failed: ret={ret}, errcode={errcode}, errmsg={errmsg}"
-        )
+            api.register_listener(
+                ListenerMetadata(
+                    id="weixin",
+                    display_name="WeChat Listener",
+                    description="Backwards-compatible alias for the WeChat listener.",
+                ),
+                compile_weixin_listener,
+                lambda *, repository, subscription, runtime_id: WechatListenerAdapter(
+                    repository=repository,
+                    subscription=subscription,
+                    runtime_id=runtime_id,
+                ),
+            )
 
-    def health(self) -> ListenerHealthSnapshot:
-        """Return the current adapter health snapshot."""
-        return ListenerHealthSnapshot(
-            subscription_id=self.subscription.id,
-            runtime_id=self._runtime_id,
-            status=self._status,
-            platform=self.subscription.platform,
-            last_polled_at=self._last_polled_at,
-            last_event_at=self._last_event_at,
-            consecutive_failures=self._consecutive_failures,
-            detail=self._detail,
-        )
-
-
-WeixinListenerPluginNode = WechatListenerPluginNode
-WeixinReplyNode = WechatReplyNode
-WeixinListenerAdapter = WechatListenerAdapter
-
-
-class WechatListenerPlugin:
-    """Plugin entry point for the WeChat listener package."""
-
-    def register(self, api: PluginAPI) -> None:
-        """Register the WeChat listener node, reply node, and adapter."""
-        api.register_node(
-            NodeMetadata(
-                name="WechatListenerPluginNode",
-                description="Receive WeChat events through the plugin contract.",
-                category="trigger",
-            ),
-            WechatListenerPluginNode,
-        )
-        api.register_node(
-            NodeMetadata(
-                name="WeixinListenerPluginNode",
-                description="Backwards-compatible alias for WechatListenerPluginNode.",
-                category="trigger",
-            ),
-            WechatListenerPluginNode,
-        )
-        api.register_node(
-            NodeMetadata(
-                name="WechatReplyNode",
-                description="Reply to WeChat messages through OpenClaw HTTP APIs.",
-                category="messaging",
-            ),
-            WechatReplyNode,
-        )
-        api.register_node(
-            NodeMetadata(
-                name="WeixinReplyNode",
-                description="Backwards-compatible alias for WechatReplyNode.",
-                category="messaging",
-            ),
-            WechatReplyNode,
-        )
-        api.register_listener(
-            ListenerMetadata(
-                id="wechat",
-                display_name="WeChat Listener",
-                description="Receive WeChat messages through OpenClaw long polling.",
-            ),
-            compile_weixin_listener,
-            lambda *, repository, subscription, runtime_id: WechatListenerAdapter(
-                repository=repository,
-                subscription=subscription,
-                runtime_id=runtime_id,
-            ),
-        )
-        api.register_listener(
-            ListenerMetadata(
-                id="weixin",
-                display_name="WeChat Listener",
-                description="Backwards-compatible alias for the WeChat listener.",
-            ),
-            compile_weixin_listener,
-            lambda *, repository, subscription, runtime_id: WechatListenerAdapter(
-                repository=repository,
-                subscription=subscription,
-                runtime_id=runtime_id,
-            ),
-        )
-
-
-plugin = WechatListenerPlugin()
+    plugin = WechatListenerPlugin()
