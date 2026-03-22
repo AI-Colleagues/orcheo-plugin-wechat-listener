@@ -8,7 +8,7 @@ dependencies = ["httpx>=0.27", "qrcode>=8.2"]
 description = "WeChat listener plugin for Orcheo"
 name = "orcheo-plugin-wechat-listener"
 requires-python = ">=3.12"
-version = "0.1.0"
+version = "0.1.1"
 
 [project.scripts]
 orcheo-wechat-plugin-login = "orcheo_plugin_wechat_listener.login:main"
