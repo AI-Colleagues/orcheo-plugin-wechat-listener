@@ -261,6 +261,8 @@ async def test_wechat_adapter_polls_and_persists_cursor(
     assert payload.reply_target["context_token"] == "ctx-99"
     assert repository.cursor is not None
     assert repository.cursor.metadata["weixin_get_updates_buf"] == "cursor-after-poll"
+    assert adapter.health().last_polled_at is not None
+    assert adapter.health().last_polled_at.tzinfo is not None
 
 
 @pytest.mark.asyncio()

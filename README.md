@@ -26,15 +26,63 @@ As of 2026-03-22, the npm `latest` version for both packages is `1.0.2`.
 - Orcheo backend with the listener runtime running
 - A WeChat account connected through Tencent's OpenClaw WeChat channel
 
+## Quick Start (Docker Stack / Canvas)
+
+If you are using the repository Docker stack and Canvas, the plugin, workflow,
+credentials, backend, and worker must all point at the same backend.
+
+1. Install the plugin into the stack runtime:
+
+   ```bash
+   orcheo plugin install \
+     'git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git' \
+     --runtime stack
+   docker compose restart backend worker
+   ```
+
+2. In Canvas, create a workflow from the `WeChat Private Listener` template.
+
+3. Connect the WeChat account and create the workflow-scoped credentials:
+
+   ```bash
+   uv run --project packages/plugins/wechat_listener \
+     orcheo-wechat-plugin-login \
+     --workflow-id <workflow-id> \
+     --access private \
+     --print-commands
+   ```
+
+   Scan the QR code in WeChat, then run the printed `orcheo credential create`
+   commands against the same `ORCHEO_API_URL`.
+
+4. Verify the workflow is ready, then send a real WeChat message:
+
+   ```bash
+   ORCHEO_API_URL=http://localhost:8000 \
+   orcheo workflow show <workflow-id>
+   ```
+
+   `credential_readiness.status` should be `ready`.
+
 ## Installation
 
-Install the Orcheo plugin:
+Install the Orcheo plugin from the Git repository into the same runtime as your
+backend:
 
 ```bash
-orcheo plugin install ./packages/plugins/wechat_listener
+orcheo plugin install \
+  'git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git'
 ```
 
-Then restart the backend and worker processes:
+For the repository Docker stack, include `--runtime stack`:
+
+```bash
+orcheo plugin install \
+  'git+https://github.com/AI-Colleagues/orcheo-plugin-wechat-listener.git' \
+  --runtime stack
+```
+
+Then restart the backend and worker processes that should load the listener:
 
 ```bash
 docker compose restart backend worker
@@ -70,8 +118,13 @@ ORCHEO_API_URL=http://localhost:8000 \
 ORCHEO_SERVICE_TOKEN=your-token \
 uv run --project packages/plugins/wechat_listener \
   orcheo-wechat-plugin-login \
-  --workflow-id <workflow-id>
+  --workflow-id <workflow-id> \
+  --access private
 ```
+
+If you do not have a service token handy, add `--print-commands`. The command
+will still perform the QR login and then print the exact
+`orcheo credential create ...` commands to run manually.
 
 ## Connect WeChat Through OpenClaw
 
@@ -101,6 +154,10 @@ Add a `WechatListenerPluginNode` to your workflow and configure either:
 
 Credentials can still be interpolated from the Orcheo credential vault with the
 `[[credential_key]]` syntax.
+
+For Canvas-backed workflows, create those credentials in the same backend that
+Canvas is configured to use. In this repository, that usually means matching
+`ORCHEO_API_URL` to `VITE_ORCHEO_BACKEND_URL`.
 
 If the listener starts without a saved Orcheo cursor, it can bootstrap from the
 OpenClaw `get_updates_buf` sync file for the same account, which helps avoid

@@ -24,6 +24,7 @@ from orcheo.listeners.models import (
     ListenerSubscription,
 )
 from orcheo.listeners.registry import ListenerMetadata
+from orcheo.models.base import _utcnow
 from orcheo.nodes.base import TaskNode
 from orcheo.nodes.listeners import ListenerNode
 from orcheo.nodes.registry import NodeMetadata
@@ -671,7 +672,7 @@ class WechatListenerAdapter:
                 self.subscription.id,
                 payload,
             )
-            self._last_event_at = datetime.now()
+            self._last_event_at = _utcnow()
         await stop_event.wait()
         self._status = "stopped"
 
@@ -730,7 +731,7 @@ class WechatListenerAdapter:
                 if response is None:
                     break
 
-                self._last_polled_at = datetime.now()
+                self._last_polled_at = _utcnow()
                 next_timeout_ms = response.get("longpolling_timeout_ms")
                 if isinstance(next_timeout_ms, int | float) and next_timeout_ms > 0:
                     poll_timeout_ms = int(next_timeout_ms)
@@ -769,7 +770,7 @@ class WechatListenerAdapter:
                         self.subscription.id,
                         payload,
                     )
-                    self._last_event_at = datetime.now()
+                    self._last_event_at = _utcnow()
 
                 self._status = "healthy"
                 self._detail = None
